@@ -22,8 +22,6 @@ Revisions:
     February 6, 2016 - File created. Implement basic WinMain and
         WndProc functions.
     February 10, 2016 - Implement WSA events in WndProc.
-    February 11, 2016 - Update WndProc to handle different protocols (TCP/UDP).
-    February 12, 2016 - Added events in WndProc for new revamped GUI.
 Designer: Gabriel Seonghyoung Lee
 Programmer: Gabriel Seonghyoung Lee
 Notes: 
@@ -65,9 +63,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hprevInstance,
     if (!RegisterClassEx(&Wcl))
         return 0;
 
-    hwnd = CreateWindow(Name, Name, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 815, 680, 
-        NULL, NULL, hInst, NULL);
+    hwnd = CreateWindow(Name, Name, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
+        WS_MINIMIZEBOX | WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT,
+        600, 335, NULL, NULL, hInst, NULL);
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
@@ -82,49 +80,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hprevInstance,
 LRESULT CALLBACK WndProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam) {
     SOCKET sd;
     LPSOCKET_INFORMATION SocketInfo;
-    DWORD RecvBytes;
-    DWORD SendBytes;
+    DWORD RecvBytes, SendBytes;
     DWORD Flags;
 
     switch (Message) {
     case WM_CREATE:
-        createGUI(hwnd);
-        fprintf(stdout, "Hello world");
-        break;
-    case WM_COMMAND:
-        switch (LOWORD(wParam)) {
-        case ID_FILE_EXIT:
-            PostQuitMessage(0);
-            break;
-        case ID_MODE_SERVER:
-            setMode(SERVERMODE);
-            break;
-        case ID_MODE_CLIENT:
-            setMode(CLIENTMODE);
-            break;
-        case ID_ABOUT_USERGUIDE:
-            break;
-        case RADIOTCP:
-        case RADIOUDP:
-            checkProtocol(hwnd);
-            MessageBox(hwnd, "WindowSockets", "Radio", MB_OK);
-            break;
-        case BUTTONBROWSE:
-            MessageBox(hwnd, "WindowSockets", "Browse", MB_OK);
-            break;
-        case BUTTONCLEARSTATUS:
-            MessageBox(hwnd, "WindowSockets", "Clear Status", MB_OK);
-            break;
-        case BUTTONCLEARSENT:
-            MessageBox(hwnd, "WindowSockets", "Clear Sent", MB_OK);
-            break;
-        case BUTTONRESETSTAT:
-            MessageBox(hwnd, "WindowSockets", "Clear Stat", MB_OK);
-            break;
-        case BUTTONRESETALL:
-            MessageBox(hwnd, "WindowSockets", "Reset All", MB_OK);
-            break;
-        }
+        createElements(hwnd);
         break;
     case WM_SOCKET:
         if (WSAGETSELECTERROR(lParam)) {
@@ -136,30 +97,75 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam) 
                 break;
             case FD_ACCEPT:
                 if ((sd = accept(wParam, NULL, NULL)) == INVALID_SOCKET) {
-                    paintStatus("Error: accept - INVALID SOCKET");
-                    exit(1);
+                    break;
                 }
+
                 CreateSocketInformation(sd);
-                WSAAsyncSelect(sd, hwnd, WM_SOCKET, FD_READ | FD_WRITE | FD_CLOSE);
+                
+                WSAAsyncSelect(sd, hwnd, WM_SOCKET, FD_READ | FD_CLOSE);
                 break;
             case FD_READ:
-                if (getWindowState() == TCPPROTOCOL) {
-                } else if (getWindowState() == UDPPROTOCOL) {
+                SocketInfo = GetSocketInformation(wParam);
+
+                // Read data only if the receive buffer is empty.
+
+                if (SocketInfo->BytesRECV != 0) {
+                    SocketInfo->RecvPosted = TRUE;
+                    return 0;
                 } else {
-                    OutputDebugString("Error: Invalid mode");
-                    exit(1);
+                    SocketInfo->DataBuf.buf = SocketInfo->Buffer;
+                    SocketInfo->DataBuf.len = DATA_BUFSIZE;
+
+                    Flags = 0;
+                    if (WSARecv(SocketInfo->Socket, &(SocketInfo->DataBuf), 1, &RecvBytes,
+                        &Flags, NULL, NULL) == SOCKET_ERROR) {
+                        if (WSAGetLastError() != WSAEWOULDBLOCK) {
+                            printf("WSARecv() failed with error %d\n", WSAGetLastError());
+                            FreeSocketInformation(wParam);
+                            return 0;
+                        }
+                    } else { // No error so update the byte count
+                        SocketInfo->BytesRECV = RecvBytes;
+                    }
+                    break;
                 }
                 break;
             case FD_WRITE:
-                if (getWindowState() == TCPPROTOCOL) {
-                } else if (getWindowState() == UDPPROTOCOL) {
-                } else {
-                    OutputDebugString("Error: Invalid mode");
-                    exit(1);
+                SocketInfo = GetSocketInformation(wParam);
+
+                if (SocketInfo->BytesRECV > SocketInfo->BytesSEND) {
+                    SocketInfo->DataBuf.buf = SocketInfo->Buffer + SocketInfo->BytesSEND;
+                    SocketInfo->DataBuf.len = SocketInfo->BytesRECV - SocketInfo->BytesSEND;
+
+                    if (WSASend(SocketInfo->Socket, &(SocketInfo->DataBuf), 1, &SendBytes, 0,
+                        NULL, NULL) == SOCKET_ERROR) {
+                        if (WSAGetLastError() != WSAEWOULDBLOCK) {
+                            printf("WSASend() failed with error %d\n", WSAGetLastError());
+                            FreeSocketInformation(wParam);
+                            return 0;
+                        }
+                    }
+                    else { // No error so update the byte count
+                        SocketInfo->BytesSEND += SendBytes;
+                    }
+                }
+
+                if (SocketInfo->BytesSEND == SocketInfo->BytesRECV) {
+                    SocketInfo->BytesSEND = 0;
+                    SocketInfo->BytesRECV = 0;
+
+                    // If a RECV occurred during our SENDs then we need to post an FD_READ
+                    // notification on the socket.
+
+                    if (SocketInfo->RecvPosted == TRUE) {
+                        SocketInfo->RecvPosted = FALSE;
+                        PostMessage(hwnd, WM_SOCKET, wParam, FD_READ);
+                    }
                 }
                 break;
             case FD_CLOSE:
-                closesocket((SOCKET)wParam);
+                printf("Closing socket %d\n", wParam);
+                FreeSocketInformation(wParam);
                 break;
             }
         }

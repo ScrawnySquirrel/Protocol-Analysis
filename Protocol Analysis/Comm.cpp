@@ -1,167 +1,159 @@
 #include "Comm.h"
 
-void serverTCP() {
-    SOCKET sd, new_sd;
-    struct sockaddr_in server, client;
+void initializeTCP() {
     WSADATA wsaData;
-    int client_len, bytes_to_read, n;
-    char *bp, buf[BUFSIZE];
 
-    if (sd = socket(AF_INET, SOCK_STREAM, 0) == -1) {
-        OutputDebugString("Error");
-        return;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        paintStatus("Error: WSAStartup");
+        exit(1);
     }
-
-    memset((char *)&server, 0, sizeof(struct sockaddr_in));
-    server.sin_family = AF_INET;
-    server.sin_port = htons(getPort());
-    server.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(sd, (struct sockaddr *)&server, sizeof(server)) == -1) {
-        OutputDebugString("Error");
-        return;
-    }
-
-    listen(sd, 5);
-
-    while (TRUE) {
-        client_len = sizeof(client);
-        if ((new_sd = accept(sd, (struct sockaddr *)&client, &client_len)) == -1) {
-            OutputDebugString("Error");
-            return;
-        }
-        fprintf(stderr, "Remote Address: %s\n", inet_ntoa(client.sin_addr));
-        bp = buf;
-        bytes_to_read = BUFSIZE;
-        while ((n = recv(new_sd, bp, bytes_to_read, 0)) < BUFSIZE) {
-            bp += n;
-            bytes_to_read -= n;
-            if (n == 0)
-                break;
-        }
-    }
-    closesocket(sd);
-    WSACleanup();
 }
+void initializeUDP() {}
 
-void serverUDP() {
-    SOCKET sd;
-    struct sockaddr_in server, client;
+/*  
+void serverTCP(HWND winhandle) {
     WSADATA wsaData;
-    int client_len, n;
-    char *buf;
+    SOCKET sd;
+    SOCKADDR_IN inetAddr;
 
-
-    if ((sd = socket(PF_INET, SOCK_DGRAM, 0)) == -1) {
-        OutputDebugString("Error");
-        return;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        paintStatus("Error: WSAStartup");
+        exit(1);
     }
 
-    memset((char *)&server, 0, sizeof(server));
-    server.sin_family = AF_INET;
-    server.sin_port = htons(getPort());
-    server.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(sd, (struct sockaddr *)&server, sizeof(server)) == -1) {
-        OutputDebugString("Error");
-        return;
+    if ((sd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET) {
+        paintStatus("Error: Invalid socket");
+        exit(1);
     }
 
-    while (TRUE) {
-        client_len = sizeof(client);
-        if ((n = recvfrom(sd, buf, MAXBUF, 0, (struct sockaddr *)&client, &client_len)) < 0) {
-            OutputDebugString("Error");
-            return;
+    inetAddr.sin_family = AF_INET;
+    inetAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    inetAddr.sin_port = htons(getPort());
+
+    if (bind(sd, (PSOCKADDR)&inetAddr, sizeof(inetAddr)) == SOCKET_ERROR) {
+        paintStatus("Error: Failed bind");
+        exit(1);
+    }
+
+    WSAAsyncSelect(sd, winhandle, WM_SOCKET, FD_ACCEPT | FD_CLOSE);
+
+    if (listen(sd, 5)) {
+        paintStatus("Error: Failed listen");
+        exit(1);
+    }
+}
+
+void serverUDP(HWND winhandle) {
+
+}
+
+void clientTCP(HWND winhandle) {
+    WSADATA wsaData;
+    SOCKET sd;
+    struct hostent *host;
+    struct in_addr my_addr, *addr_p;
+    SOCKADDR_IN inetAddr;
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        OutputDebugString("Error: WSAStartup");
+        exit(1);
+    }
+
+    if ((sd = socket(PF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET) {
+        OutputDebugString("Error: Invalid socket");
+        exit(1);
+    }
+
+    WSAAsyncSelect(sd, winhandle, WM_SOCKET, FD_READ | FD_CLOSE);
+
+    if (isdigit(*getIPHost())) {
+        addr_p = (struct in_addr*)malloc(sizeof(struct in_addr));
+        addr_p = &my_addr;
+
+        addr_p->s_addr = inet_addr(getIPHost());
+
+        if ((host = gethostbyaddr((char *)addr_p, PF_INET, sizeof(my_addr))) == NULL) {
+            OutputDebugString("Error: gethosbyaddr");
+            exit(1);
+        }
+    } else {
+        if ((host = gethostbyname(getIPHost())) == NULL) {
+            OutputDebugString("Error: gethostbyname");
+            exit(1);
         }
     }
 
-    closesocket(sd);
-    WSACleanup();
-}
+    inetAddr.sin_family = AF_INET;
+    inetAddr.sin_addr.s_addr = htonl((u_long)host->h_addr);
+    inetAddr.sin_port = htons(getPort());
 
-void clientTCP() {
-    SOCKET sd;
-    struct hostent *hp;
-    struct sockaddr_in server;
-    char buf[BUFSIZE], **pptr;
-    int ns;
-
-    if ((sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        OutputDebugString("Error");
-        return;
-    }
-
-    memset((char *)&server, 0, sizeof(struct sockaddr_in));
-    server.sin_family = AF_INET;
-    server.sin_port = htons(getPort());
-    if ((hp = gethostbyname(getIPHost())) == NULL) {
-        OutputDebugString("Error");
-        return;
-    }
-    // Use gethostbyaddr for IP here
-
-    memcpy((char *)&server.sin_addr, hp->h_addr, hp->h_length);
-
-    if (connect(sd, (struct sockaddr *)&server, sizeof(server)) == -1) {
-        OutputDebugString("Error");
-        return;
-    }
-
-    pptr = hp->h_addr_list;
-    memset((char *)buf, 0, sizeof(buf));
-    // fgets(stdin, buf); // definitely change this
-
-    ns = send(sd, buf, BUFSIZE, 0);
-
-    closesocket(sd);
-    WSACleanup();
-}
-
-void clientUDP() {
-    SOCKET sd;
-    struct hostent *hp;
-    struct sockaddr_in server, client;
-    WSADATA wsaDATA;
-    int server_len, client_len, data_size;
-    char buf[MAXBUF];
-
-    if ((sd = socket(PF_INET, SOCK_DGRAM, 0)) == -1) {
-        OutputDebugString("Error");
-        return;
-    }
-
-    memset((char *)&server, 0, sizeof(server));
-    server.sin_family = AF_INET;
-    server.sin_port = htons(getPort());
-
-    if ((hp = gethostbyname(getIPHost())) == NULL) {
-        OutputDebugString("Error");
-        return;
-    }
-
-    memcpy((char *)&server.sin_addr, hp->h_addr, hp->h_length);
-
-    memset((char *)&client, 0, sizeof(client));
-    client.sin_family = AF_INET;
-    client.sin_port = htons(0);
-    client.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(sd, (struct sockaddr *)&client, sizeof(client)) == -1) {
-        OutputDebugString("Error");
-        return;
-    }
-
-    client_len = sizeof(client);
-
-    if (getsockname(sd, (struct sockaddr *)&client, &client_len)) {
-        OutputDebugString("Error");
-        return;
-    }
-
-    server_len = sizeof(server);
-
-    if (sendto(sd, buf, data_size, 0, (struct sockaddr *)&server, server_len) == -1) {
-        OutputDebugString("Error");
-        return;
+    if (connect(sd, (PSOCKADDR)&inetAddr, sizeof(inetAddr)) == SOCKET_ERROR) {
+        OutputDebugString("Error: Failed connect");
+        exit(1);
     }
 }
+
+void clientUDP(HWND winhandle) {
+
+}
+
+void sendTCP() {
+    SocketInfo = GetSocketInformation(wParam);
+    if (SocketInfo->BytesRECV > SocketInfo->BytesSEND) {
+        SocketInfo->DataBuf.buf = SocketInfo->Buffer + SocketInfo->BytesSEND;
+        SocketInfo->DataBuf.len = SocketInfo->BytesRECV - SocketInfo->BytesSEND;
+
+        if (WSASend(SocketInfo->Socket, &(SocketInfo->DataBuf), 1, &SendBytes, 0, NULL, NULL) == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSAEWOULDBLOCK) {
+                printf("WSASend() failed with error %d\n", WSAGetLastError());
+                FreeSocketInformation(wParam);
+                return 0;
+            }
+        }
+        else { // No error so update the byte count
+            printf("WSASend() is OK!\n");
+            SocketInfo->BytesSEND += SendBytes;
+        }
+    }
+
+    if (SocketInfo->BytesSEND == SocketInfo->BytesRECV) {
+        SocketInfo->BytesSEND = 0;
+        SocketInfo->BytesRECV = 0;
+        // If a RECV occurred during our SENDs then we need to post an FD_READ notification on the socket
+        if (SocketInfo->RecvPosted == TRUE) {
+            SocketInfo->RecvPosted = FALSE;
+            PostMessage(hwnd, WM_SOCKET, wParam, FD_READ);
+        }
+    }
+}
+
+void sendUDP();
+
+void recvTCP() {
+    SocketInfo = GetSocketInformation(wParam);
+    // Read data only if the receive buffer is empty
+    if (SocketInfo->BytesRECV != 0) {
+        SocketInfo->RecvPosted = TRUE;
+        return 0;
+    }
+    else {
+        SocketInfo->DataBuf.buf = SocketInfo->Buffer;
+        SocketInfo->DataBuf.len = DATA_BUFSIZE;
+
+        Flags = 0;
+        if (WSARecv(SocketInfo->Socket, &(SocketInfo->DataBuf), 1, &RecvBytes, &Flags, NULL, NULL) == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSAEWOULDBLOCK) {
+                printf("WSARecv() failed with error %d\n", WSAGetLastError());
+                FreeSocketInformation(wParam);
+                return 0;
+            }
+        }
+        else { // No error so update the byte count 
+            printf("WSARecv() is OK!\n");
+            SocketInfo->BytesRECV = RecvBytes;
+        }
+    }
+}
+
+void recvUDP();
+*/
